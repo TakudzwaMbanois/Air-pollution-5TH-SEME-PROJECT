@@ -1,0 +1,241 @@
+# -*- coding: utf-8 -*-
+import os
+import sys
+import random
+import requests
+import json
+from PyQt5.QtWidgets import QApplication, QMainWindow, QLabel, QVBoxLayout, QWidget, QMessageBox, QAction, QMenuBar, QTextBrowser, QTabWidget, QPushButton
+from PyQt5.QtWebEngineWidgets import QWebEngineView
+from PyQt5.QtCore import QUrl
+import folium
+
+# Function to get current location using an external IP-based geolocation service
+def get_current_location():
+    try:
+        response = requests.get("https://ipinfo.io")
+        data = response.json()
+        lat, lng = map(float, data['loc'].split(','))
+        return lat, lng
+    except Exception as e:
+        QMessageBox.critical(None, "Error", f"An error occurred while fetching location: {e}")
+    return None
+
+# Function to get air pollution data using OpenWeatherMap API
+def get_air_pollution_data(lat, lng):
+    api_key = 'ed9862048bd9d0234bba0f9959f8ff17'  # Your API key
+    url = f"http://api.openweathermap.org/data/2.5/air_pollution?lat={lat}&lon={lng}&appid={api_key}"
+
+    try:
+        response = requests.get(url)
+        pollution_data = response.json()
+
+        if 'list' in pollution_data:
+            return pollution_data['list'][0]  # Air pollution details
+        else:
+            QMessageBox.critical(None, "Error", "Could not retrieve air pollution data.")
+    except Exception as e:
+        QMessageBox.critical(None, "Error", f"An error occurred: {e}")
+    return None
+
+# Feature 1: Save & Load Multiple Favorite Locations
+def save_favorite_location(lat, lng):
+    favorite = {'lat': lat, 'lng': lng}
+    try:
+        with open('favorites.json', 'r') as f:
+            favorites = json.load(f)
+    except (FileNotFoundError, json.JSONDecodeError):
+        favorites = []
+    
+    favorites.append(favorite)
+    with open('favorites.json', 'w') as f:
+        json.dump(favorites, f)
+
+def load_favorite_locations():
+    try:
+        with open('favorites.json', 'r') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        return []
+
+# Feature 3 Simple AQI Advice
+def get_aqi_advice(aqi):
+    if aqi == 1:
+        return "Air quality is good. Enjoy outdoor activities!"
+    elif aqi == 2:
+        return "Air quality is fair. It's safe to be outside."
+    elif aqi == 3:
+        return "Air quality is moderate. Sensitive individuals should take caution."
+    elif aqi == 4:
+        return "Air quality is poor. Limit outdoor activities."
+    else:
+        return "Air quality is very poor. Stay indoors and avoid exercise."
+
+# Feature 4,Random Fun Fact
+fun_facts = [
+    "Trees can help reduce air pollution by absorbing harmful gases.",
+    "Air pollution can be worse indoors than outdoors.",
+    "Ozone is both good and bad depending on where it is in the atmosphere.",
+    "Masks can help protect against particulate matter in polluted air."
+]
+
+def display_random_fact():
+    fact = random.choice(fun_facts)
+    QMessageBox.information(None, "Did You Know?", fact)
+
+# Function to create and return the map HTML content using Folium
+def create_map_html(lat, lng, pollution_data, favorite_locations=None):
+    m = folium.Map(location=[lat, lng], zoom_start=12)
+
+    # Add marker for current location
+    aqi = pollution_data['main']['aqi']
+    components = pollution_data['components']
+    popup_text = f"""
+    Air Quality Index (AQI): {aqi}
+    CO: {components['co']} 
+    NO: {components['no']} 
+    NO2: {components['no2']} 
+    O3: {components['o3']} 
+    SO2: {components['so2']} 
+    PM2.5: {components['pm2_5']} 
+    PM10: {components['pm10']} 
+    NH3: {components['nh3']} 
+    """
+    folium.Marker([lat, lng], popup=popup_text, tooltip="Air Quality Info").add_to(m)
+
+    # Plot all favorite locations on the map
+    if favorite_locations:
+        for location in favorite_locations:
+            fav_lat, fav_lng = location['lat'], location['lng']
+            folium.Marker([fav_lat, fav_lng], popup=f"Favorite Location: ({fav_lat}, {fav_lng})", icon=folium.Icon(color="blue")).add_to(m)
+
+    # Save the map to a temporary HTML file
+    map_file = "air_quality_map.html"
+    m.save(map_file)
+    return map_file
+
+# Class for the main application window
+class AirQualityApp(QMainWindow):
+    def __init__(self):
+        super().__init__()
+        self.setWindowTitle("Air Pollution App")
+        self.setGeometry(100, 100, 800, 600)
+        self.initUI()
+        display_random_fact()  # Show random fun fact when app starts
+
+    def initUI(self):
+        # Create menu bar
+        menubar = self.menuBar()
+
+        # Map Menu
+        map_menu = menubar.addMenu("Map")
+        show_map_action = QAction("Show Air Quality Map", self)
+        show_map_action.triggered.connect(self.show_air_quality_map)
+        map_menu.addAction(show_map_action)
+
+        # Show favorite locations on the map
+        show_favorites_action = QAction("Show Map with Favorite Locations", self)
+        show_favorites_action.triggered.connect(self.show_map_with_favorites)
+        map_menu.addAction(show_favorites_action)
+
+        # Travel Recommendations Menu
+        travel_menu = menubar.addMenu("Travel Recommendations")
+        travel_action = QAction("Get Travel Recommendations", self)
+        travel_action.triggered.connect(self.show_travel_recommendations)
+        travel_menu.addAction(travel_action)
+
+        # Add Save Favorite Locatio
+        favorite_menu = menubar.addMenu("Favorites")
+        save_favorite_action = QAction("Save Current Location", self)
+        save_favorite_action.triggered.connect(self.save_current_location)
+        favorite_menu.addAction(save_favorite_action)
+
+        # Main Layout with Tabs
+        self.tabs = QTabWidget()
+        self.setCentralWidget(self.tabs)
+
+        # Tab for Air Quality Map
+        self.map_tab = QWidget()
+        self.map_layout = QVBoxLayout()
+        self.map_view = QWebEngineView(self.map_tab)
+        self.map_layout.addWidget(self.map_view)
+        self.map_tab.setLayout(self.map_layout)
+        self.tabs.addTab(self.map_tab, "Air Quality Map")
+
+        # Tab for Travel Recommendations
+        self.travel_tab = QWidget()
+        self.travel_layout = QVBoxLayout()
+        self.travel_display = QTextBrowser(self.travel_tab)
+        self.travel_layout.addWidget(self.travel_display)
+        self.travel_tab.setLayout(self.travel_layout)
+        self.tabs.addTab(self.travel_tab, "Travel Recommendations")
+
+        # Add a refresh button to manually refresh air quality data
+        self.refresh_button = QPushButton("Refresh Air Quality", self)
+        self.refresh_button.clicked.connect(self.show_air_quality_map)
+        self.map_layout.addWidget(self.refresh_button)
+
+        # Tab for Live Videos
+        self.video_tab = QWidget()
+        self.video_layout = QVBoxLayout()
+        self.video_view = QWebEngineView(self.video_tab)
+        self.video_layout.addWidget(self.video_view)
+        self.video_tab.setLayout(self.video_layout)
+        self.tabs.addTab(self.video_tab, "Live Air Quality Videos")
+
+        # Set default video (YouTube air quality channel or similar)
+        self.video_view.setUrl(QUrl("https://www.youtube.com/results?search_query=air+quality"))
+
+    def show_air_quality_map(self):
+        lat, lng = get_current_location()
+        if lat and lng:
+            pollution_data = get_air_pollution_data(lat, lng)
+            if pollution_data:
+                # Create the map HTML
+                map_file = create_map_html(lat, lng, pollution_data)
+                map_file_path = os.path.abspath(map_file)  # Get the absolute path
+                print(f"Loading map from: {map_file_path}")  # Debug statement
+                
+                # Ensure the URL is correctly formatted
+                self.map_view.setUrl(QUrl.fromLocalFile(map_file_path))
+                self.statusBar().showMessage("Air quality map loaded successfully!")
+
+    def save_current_location(self):
+        lat, lng = get_current_location()
+        if lat is not None and lng is not None:
+            save_favorite_location(lat, lng)
+            QMessageBox.information(self, "Saved", "Current location saved as a favorite!")
+
+    def show_map_with_favorites(self):
+        # Get current location
+        lat, lng = get_current_location()
+        if lat is not None and lng is not None:
+            # Load favorite locations
+            favorite_locations = load_favorite_locations()
+            if favorite_locations:
+                # Get air pollution data for current location
+                pollution_data = get_air_pollution_data(lat, lng)
+                if pollution_data:
+                    # Create map and save it as an HTML file
+                    map_file = create_map_html(lat, lng, pollution_data, favorite_locations)
+                    self.map_view.setUrl(QUrl(os.path.abspath(map_file)))  # Open the map in the web view
+                    QMessageBox.information(self, "Favorites Loaded", "Map with favorite locations loaded successfully!")
+            else:
+                QMessageBox.warning(self, "No Favorites", "You have no saved favorite locations.")
+
+    def show_travel_recommendations(self):
+        self.travel_display.clear()
+        recommendations = [
+            "Check local air quality before traveling.",
+            "Consider visiting places with low pollution levels.",
+            "Use public transport or walk to reduce carbon footprint.",
+            "Plan trips during off-peak hours to avoid congestion."
+        ]
+        self.travel_display.append("Travel Recommendations:")
+        self.travel_display.append("\n".join(recommendations))
+
+# Run
+if __name__ == "__main__":
+    app = QApplication(sys.argv)
+    window = AirQualityApp()
+    window.show()
+    sys.exit(app.exec_())
